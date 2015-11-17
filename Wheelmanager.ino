@@ -1,5 +1,9 @@
 #include <KellyCAN.h>
 #include <FlexCAN.h>
+#include <CANcallbacks.h>
+#include <Pedals.h>
+
+#define PEDAL_BOX_CAN_ID 150
 
 FlexCAN CANbus(1000000);
 
@@ -8,21 +12,16 @@ FlexCAN CANbus(1000000);
 
 CANcallbacks canbus(&CANbus);
 KellyCAN motor(&canbus, 107, 115);
+Pedals pedals;
 
-//int myarray[3] = {3,3,3};
-int brakeDacPin = 5;
-int brakePedal = A0;
 
-int throttleDacPin = 6;
-int throttlePedal = A1;
+//check these pins, they're all the wrong order
+int brakeDacPin = 20;
+int throttleDacPin = 21;
+int brSwOut = 14;
+int reSwOut = 15;
+int thSwOut = 16;
 
-int brSwitch = A2;
-int reSwitch = A3;
-int thSwitch = A4;
-
-int brSwOut = 2;
-int reSwOut = 3;
-int thSwOut = 4;
 
 /*
 typedef struct CAN_message_t {
@@ -36,25 +35,34 @@ typedef struct CAN_message_t {
 
 //below are the messages defined in the datasheet.  The flash reads look a whole lot like memory offsets.
 CAN_message_t known_messages[] = { 
-  {DEF_REQUEST_ID,0,3,CCP_FLASH_READ,INFO_MODULE_NAME,8,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,CCP_FLASH_READ,INFO_SOFTWARE_VER,2,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,CCP_FLASH_READ,CAL_TPS_DEAD_ZONE_LOW,1,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,CCP_FLASH_READ,CAL_TPS_DEAD_ZONE_HIGH,1,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,CCP_FLASH_READ,CAL_BRAKE_DEAD_ZONE_LOW,1,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,CCP_FLASH_READ,CAL_BRAKE_DEAD_ZONE_HIGH,1,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,1,CCP_A2D_BATCH_READ1,0,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,1,CCP_A2D_BATCH_READ2,0,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,1,CCP_MONITOR1,0,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,1,CCP_MONITOR2,0,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,2,COM_SW_ACC,COM_READING,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,2,COM_SW_BRK,COM_READING,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,2,COM_SW_REV,COM_READING,0,0,0,0,0,0}
+  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,INFO_MODULE_NAME,8,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,INFO_SOFTWARE_VER,2,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,CAL_TPS_DEAD_ZONE_LOW,1,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,CAL_TPS_DEAD_ZONE_HIGH,1,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,CAL_BRAKE_DEAD_ZONE_LOW,1,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,CAL_BRAKE_DEAD_ZONE_HIGH,1,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,1,0,CCP_A2D_BATCH_READ1,0,0,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,1,0,CCP_A2D_BATCH_READ2,0,0,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,1,0,CCP_MONITOR1,0,0,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,1,0,CCP_MONITOR2,0,0,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,2,0,COM_SW_ACC,COM_READING,0,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,2,0,COM_SW_BRK,COM_READING,0,0,0,0,0,0},
+  {DEF_REQUEST_ID,0,2,0,COM_SW_REV,COM_READING,0,0,0,0,0,0}
 };
 
-bool send_to_motor(CAN_message_t &message){
-  return motor.receive(message);
-
+bool motorProcessMessage(CAN_message_t &message){
+  motor.processMessage(message);
+  return true;
 }
+bool pedalsProcessMessage(CAN_message_t &message){
+  pedals.processMessage(message);
+  Serial.println("New Pedal Data");
+  Serial.print("Brake: ");
+  Serial.println(pedals.getBrake());
+  
+  return true;
+}
+
 
 void setup(){
   Serial.begin(9600);
@@ -62,18 +70,45 @@ void setup(){
   Serial.println("Manager for the kelly motor controller");
 
   CANbus.begin();
-  canbus.set_callback(115, &send_to_motor );
 
+  CAN_filter_t pedalFilter;
+  pedalFilter.rtr = 0;
+  pedalFilter.ext = 0;
+  pedalFilter.id = PEDAL_BOX_CAN_ID;
+
+  CAN_filter_t KellyReturn;
+  KellyReturn.rtr = 0;
+  KellyReturn.ext = 0;
+  KellyReturn.id = DEF_RESPONSE_ID;
+
+  //CAN_filter_t vectorHostFilter;
+  //vectorHostFilter.rtr = 0;
+  //vectorHostFilter.ext = 0;
+  //vectorHostFilter.id = DEF_RESPONSE_ID;
+
+  CANbus.setFilter(pedalFilter,0);
+  CANbus.setFilter(KellyReturn,1);
+  for (int i = 2; i < 8; ++i)
+  {
+    CANbus.setFilter(pedalFilter,i);
+  }
+
+
+  canbus.set_callback(DEF_RESPONSE_ID, &motorProcessMessage);
+  canbus.set_callback(PEDAL_BOX_CAN_ID, &pedalsProcessMessage);
 }
+
 int messageNumber = 0;
-
-
 
 
 void loop(){
   /**** copy the pots to the DACs ****/
-  analogWrite(brakeDacPin, analogRead(brakePedal)/4);
-  analogWrite(throttleDacPin, analogRead(throttlePedal)/4);
+  analogWrite(brakeDacPin, 255*pedals.getBrake());
+  analogWrite(throttleDacPin, 255*pedals.getThrottle());
+  digitalWrite(brSwOut, pedals.getBrake());
+  digitalWrite(reSwOut, pedals.getReverse());
+  digitalWrite(thSwOut, pedals.getThrottle());
+  
 
   
   /**** Send a new request to the controller ****/
@@ -85,7 +120,7 @@ void loop(){
       //canDump(&outbound);
       if(++messageNumber > 12){
         messageNumber = 0;
-        dumpStats();        
+        //dumpStats();        
       }
     }
   }
@@ -102,7 +137,7 @@ void loop(){
         //Serial.println("process success");
       }
     }else{
-      Serial.println("not intercepted");
+      //Serial.println("No response from Kelly");
     }
 
   }
