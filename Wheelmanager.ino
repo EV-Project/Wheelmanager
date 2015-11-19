@@ -1,29 +1,36 @@
 #include <KellyCAN.h>
 #include <FlexCAN.h>
 #include <CANcallbacks.h>
-#include <Pedals.h>
+#include <ChallengerEV.h>
+#include "Pedals.h"
 
-#define PEDAL_BOX_CAN_ID 150
+
+const int wheelnum = 0;
+//const int wheelnum = 1;
+//const int wheelnum = 2;
+//const int wheelnum = 3;
+
+const int brakeDacPin = 20;   
+const int throttleDacPin = 21;
+const int brSwOut = 14;         
+const int thSwOut = 15;
+const int reSwOut = 16;
+
+const uint32_t ManagerID  = wheel[wheelnum].managerID;
+const uint32_t KellyreqID = wheel[wheelnum].motorReqID;
+const uint32_t KellyresID = wheel[wheelnum].motorResID;
+
+
 
 FlexCAN CANbus(1000000);
-
-//static CAN_message_t msg,rxmsg;
-//CanBus canbus;
-
 CANcallbacks canbus(&CANbus);
-KellyCAN motor(&canbus, 107, 115);
+KellyCAN motor(&canbus, KellyreqID, KellyresID);
 Pedals pedals;
 
 
-//check these pins, they're all the wrong order
-int brakeDacPin = 20;
-int throttleDacPin = 21;
-int brSwOut = 14;
-int reSwOut = 15;
-int thSwOut = 16;
 
 
-/*
+/* the CAN message struct in the FlexCan lib only for reference
 typedef struct CAN_message_t {
   uint32_t id; // can identifier
   uint8_t ext; // identifier is extended
@@ -35,19 +42,19 @@ typedef struct CAN_message_t {
 
 //below are the messages defined in the datasheet.  The flash reads look a whole lot like memory offsets.
 CAN_message_t known_messages[] = { 
-  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,INFO_MODULE_NAME,8,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,INFO_SOFTWARE_VER,2,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,CAL_TPS_DEAD_ZONE_LOW,1,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,CAL_TPS_DEAD_ZONE_HIGH,1,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,CAL_BRAKE_DEAD_ZONE_LOW,1,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,3,0,CCP_FLASH_READ,CAL_BRAKE_DEAD_ZONE_HIGH,1,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,1,0,CCP_A2D_BATCH_READ1,0,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,1,0,CCP_A2D_BATCH_READ2,0,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,1,0,CCP_MONITOR1,0,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,1,0,CCP_MONITOR2,0,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,2,0,COM_SW_ACC,COM_READING,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,2,0,COM_SW_BRK,COM_READING,0,0,0,0,0,0},
-  {DEF_REQUEST_ID,0,2,0,COM_SW_REV,COM_READING,0,0,0,0,0,0}
+  {KellyreqID,0,3,0,CCP_FLASH_READ,INFO_MODULE_NAME,8,0,0,0,0,0},
+  {KellyreqID,0,3,0,CCP_FLASH_READ,INFO_SOFTWARE_VER,2,0,0,0,0,0},
+  {KellyreqID,0,3,0,CCP_FLASH_READ,CAL_TPS_DEAD_ZONE_LOW,1,0,0,0,0,0},
+  {KellyreqID,0,3,0,CCP_FLASH_READ,CAL_TPS_DEAD_ZONE_HIGH,1,0,0,0,0,0},
+  {KellyreqID,0,3,0,CCP_FLASH_READ,CAL_BRAKE_DEAD_ZONE_LOW,1,0,0,0,0,0},
+  {KellyreqID,0,3,0,CCP_FLASH_READ,CAL_BRAKE_DEAD_ZONE_HIGH,1,0,0,0,0,0},
+  {KellyreqID,0,1,0,CCP_A2D_BATCH_READ1,0,0,0,0,0,0,0},
+  {KellyreqID,0,1,0,CCP_A2D_BATCH_READ2,0,0,0,0,0,0,0},
+  {KellyreqID,0,1,0,CCP_MONITOR1,0,0,0,0,0,0,0},
+  {KellyreqID,0,1,0,CCP_MONITOR2,0,0,0,0,0,0,0},
+  {KellyreqID,0,2,0,COM_SW_ACC,COM_READING,0,0,0,0,0,0},
+  {KellyreqID,0,2,0,COM_SW_BRK,COM_READING,0,0,0,0,0,0},
+  {KellyreqID,0,2,0,COM_SW_REV,COM_READING,0,0,0,0,0,0}
 };
 
 bool motorProcessMessage(CAN_message_t &message){
@@ -74,12 +81,12 @@ void setup(){
   CAN_filter_t pedalFilter;
   pedalFilter.rtr = 0;
   pedalFilter.ext = 0;
-  pedalFilter.id = PEDAL_BOX_CAN_ID;
+  pedalFilter.id = ManagerID;
 
   CAN_filter_t KellyReturn;
   KellyReturn.rtr = 0;
   KellyReturn.ext = 0;
-  KellyReturn.id = DEF_RESPONSE_ID;
+  KellyReturn.id = KellyresID;
 
   //CAN_filter_t vectorHostFilter;
   //vectorHostFilter.rtr = 0;
@@ -88,14 +95,15 @@ void setup(){
 
   CANbus.setFilter(pedalFilter,0);
   CANbus.setFilter(KellyReturn,1);
+  //fill the remaining filters to prevent ack.
   for (int i = 2; i < 8; ++i)
   {
     CANbus.setFilter(pedalFilter,i);
   }
 
-
-  canbus.set_callback(DEF_RESPONSE_ID, &motorProcessMessage);
-  canbus.set_callback(PEDAL_BOX_CAN_ID, &pedalsProcessMessage);
+  //set the callback functions
+  canbus.set_callback(KellyReturn.id, &motorProcessMessage);
+  canbus.set_callback(pedalFilter.id, &pedalsProcessMessage);
 }
 
 int messageNumber = 0;
