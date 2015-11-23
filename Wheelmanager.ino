@@ -18,6 +18,10 @@ const int brSwOut = 14;
 const int thSwOut = 15;
 const int reSwOut = 16;
 
+const int redLightInPin = 22;
+const int greenLightInPin = 23;
+
+
 //pull the constants out of ChallengerEV.h
 const uint32_t ManagerID  = wheel[wheelnum].managerID;  //messages to the wheel managers
 const uint32_t KellyreqID = wheel[wheelnum].motorReqID; //messages to the kelly
@@ -71,6 +75,8 @@ void setup(){
   pinMode(brSwOut, OUTPUT);
   pinMode(reSwOut, OUTPUT);
 
+  pinMode(redLightInPin, INPUT);
+  pinMode(greenLightInPin, INPUT);
   
   Serial.begin(9600);
 
@@ -117,7 +123,9 @@ void loop(){
   digitalWrite(reSwOut, pedals.getReverse());
   digitalWrite(thSwOut, pedals.getThrottle());
   
-  
+  bool redLightState = digitalRead(redLightInPin);
+  bool greenLightState = digitalRead(greenLightInPin);
+
   /**** Send a new request to the controller ****/
   if(!motor.get_waiting()){
     CAN_message_t outbound = known_messages[messageNumber];
@@ -150,13 +158,24 @@ void loop(){
 
   /**** transmit to the dash ****/
   CAN_message_t telem_message = {dashID,0,8, 0, 0,0,0,0,0,0,0,0};
+
   uint16_t reportRPM = motor.get_mech_rpm();
-  telem_message.buf[0] = ((reportRPM>>8) & 0xFF);
+
+  uint8_t telemBits = 0;
+  if(redLightState) telemBits |= 1<< redLightBit;
+  if(greenLightState) telemBits |= 1<< greenLightBit;
+
+  telem_message.buf[0] = ((reportRPM>>8) & 0xFF);   //bit packing for the RPM
   telem_message.buf[1] = (reportRPM & 0xFF);
-  telem_message.buf[2] = motor.get_battery_voltage();
-  telem_message.buf[3] = motor.get_current_pc();
-  
-  telem_message.len = 4;
+  telem_message.buf[2] = motor.get_battery_voltage(); //pack voltage (raw from the kelly)
+  telem_message.buf[3] = motor.get_current_pc();      //controller current in percent (raw)
+  telem_message.buf[4] = 255*pedals.getThrottle();    //throttle repeated from pedals
+  telem_message.buf[5] = 255*pedals.getBrake();       //brake repeated from pedals
+
+  telem_message.buf[6] = telemBits;            //bitmap of additional info
+  //add some switches and status bits (including the red and green lights)
+  telem_message.len = 7;
+
   canbus.transmit(telem_message);
 
 }
