@@ -4,11 +4,13 @@
 #include <ChallengerEV.h>
 #include "Pedals.h"
 
+//wheels are indexed 1-4
+const int wheelnumber = 3;
 
-const int wheelnum = 0;
-//const int wheelnum = 1;
-//const int wheelnum = 2;
-//const int wheelnum = 3;
+
+
+
+const int wheelnum = wheelnumber - 1;
 
 const int brakeDacPin = 20;   
 const int throttleDacPin = 21;
@@ -16,10 +18,11 @@ const int brSwOut = 14;
 const int thSwOut = 15;
 const int reSwOut = 16;
 
-const uint32_t ManagerID  = wheel[wheelnum].managerID;
-const uint32_t KellyreqID = wheel[wheelnum].motorReqID;
-const uint32_t KellyresID = wheel[wheelnum].motorResID;
-
+//pull the constants out of ChallengerEV.h
+const uint32_t ManagerID  = wheel[wheelnum].managerID;  //messages to the wheel managers
+const uint32_t KellyreqID = wheel[wheelnum].motorReqID; //messages to the kelly
+const uint32_t KellyresID = wheel[wheelnum].motorResID; //messages from the kelly
+const uint32_t dashID = wheel[wheelnum].dashID;  //telemetry messages from the wheel manager
 
 
 FlexCAN CANbus(1000000);
@@ -28,17 +31,6 @@ KellyCAN motor(&canbus, KellyreqID, KellyresID);
 Pedals pedals;
 
 
-
-
-/* the CAN message struct in the FlexCan lib only for reference
-typedef struct CAN_message_t {
-  uint32_t id; // can identifier
-  uint8_t ext; // identifier is extended
-  uint8_t len; // length of data
-  uint16_t timeout; // milliseconds, zero will disable waiting
-  uint8_t buf[8];
-} CAN_message_t;
-*/
 
 //below are the messages defined in the datasheet.  The flash reads look a whole lot like memory offsets.
 CAN_message_t known_messages[] = { 
@@ -72,6 +64,14 @@ bool pedalsProcessMessage(CAN_message_t &message){
 
 
 void setup(){
+
+  pinMode(brakeDacPin, OUTPUT);
+  pinMode(throttleDacPin, OUTPUT);
+  pinMode(thSwOut, OUTPUT);
+  pinMode(brSwOut, OUTPUT);
+  pinMode(reSwOut, OUTPUT);
+
+  
   Serial.begin(9600);
 
   Serial.println("Manager for the kelly motor controller");
@@ -117,7 +117,6 @@ void loop(){
   digitalWrite(reSwOut, pedals.getReverse());
   digitalWrite(thSwOut, pedals.getThrottle());
   
-
   
   /**** Send a new request to the controller ****/
   if(!motor.get_waiting()){
@@ -147,13 +146,32 @@ void loop(){
     }else{
       //Serial.println("No response from Kelly");
     }
-
   }
+
+  /**** transmit to the dash ****/
+  CAN_message_t telem_message = {dashID,0,8, 0, 0,0,0,0,0,0,0,0};
+  uint16_t reportRPM = motor.get_mech_rpm();
+  telem_message.buf[0] = ((reportRPM>>8) & 0xFF);
+  telem_message.buf[1] = (reportRPM & 0xFF);
+  telem_message.buf[2] = motor.get_battery_voltage();
+  telem_message.buf[3] = motor.get_current_pc();
+  
+  telem_message.len = 4;
+  canbus.transmit(telem_message);
 
 }
 
 
 
+/* the CAN message struct in the FlexCan lib only for reference
+typedef struct CAN_message_t {
+  uint32_t id; // can identifier
+  uint8_t ext; // identifier is extended
+  uint8_t len; // length of data
+  uint16_t timeout; // milliseconds, zero will disable waiting
+  uint8_t buf[8];
+} CAN_message_t;
+*/
 
 
 
