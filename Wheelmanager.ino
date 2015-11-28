@@ -5,7 +5,7 @@
 #include "Pedals.h"
 
 //wheels are indexed 1-4 in hardware
-const int wheelnumber = 2;
+const int wheelnumber = 1;
 
 
 
@@ -35,8 +35,6 @@ FlexCAN CANbus(1000000);
 CANcallbacks canbus(&CANbus);
 KellyCAN motor(&canbus, KellyreqID, KellyresID);
 Pedals pedals;
-
-
 
 //below are the messages defined in the datasheet.  The flash reads look a whole lot like memory offsets.
 CAN_message_t known_messages[] = { 

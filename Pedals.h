@@ -32,6 +32,12 @@ class Pedals{
     bool SDfront;
     bool SDrear;
     bool Estop;
+
+    uint32_t watchdogTimer = 0;
+    uint32_t watchdogPeriod= 100000;   //100mS
+
+    bool checkWatchdog();
+    void patWatchdog();
 };
 
 
