@@ -4,13 +4,12 @@
 #include <ChallengerEV.h>
 #include "Pedals.h"
 
-//wheels are indexed 1-4
-const int wheelnumber = 3;
+//wheels are indexed 1-4 in hardware
+const int wheelnumber = 2;
 
 
 
-
-const int wheelnum = wheelnumber - 1;
+//pin numbers on the board
 
 const int brakeDacPin = 20;   
 const int throttleDacPin = 21;
@@ -21,7 +20,10 @@ const int reSwOut = 16;
 const int redLightInPin = 22;
 const int greenLightInPin = 23;
 
+const int watchdogPin = 9;
 
+
+const int wheelnum = wheelnumber - 1;   //zero index the wheel number
 //pull the constants out of ChallengerEV.h
 const uint32_t ManagerID  = wheel[wheelnum].managerID;  //messages to the wheel managers
 const uint32_t KellyreqID = wheel[wheelnum].motorReqID; //messages to the kelly
@@ -63,6 +65,8 @@ bool pedalsProcessMessage(CAN_message_t &message){
   Serial.print("Brake: ");
   Serial.println(pedals.getBrake());
   
+  //toggle the watchdog pin (charge pump)
+  digitalWrite(watchdogPin, !digitalRead(watchdogPin));
   return true;
 }
 
@@ -114,11 +118,39 @@ void setup(){
 
 int messageNumber = 0;
 
+float maxSpeedEnd = 7/3.6;    // m/s where the throttle drops to zero (7km/h)
+float maxSpeedStart = 5/3.6;  // m/s where the throttle limiter starts (5km/h)
+
+float wheelCircumference = 0.6*3.14;    // metres
+float gearRatio = 6;          //6:1 reduction chain
+//limit to 7km/h.
+//to simply clamp would cause oscillation, this ramp function should smooth that off.
+uint16_t maxRPMend   = 60 * (maxSpeedEnd / wheelCircumference) * gearRatio;    //the end of the ramp function
+uint16_t maxRPMstart = 60 * (maxSpeedStart/wheelCircumference) * gearRatio;  //the start of the ramp function
+uint16_t maxRPMwidth = maxRPMend - maxRPMstart;
+
+float throttleClamp(float throttle, uint16_t RPM){
+  if(RPM<maxRPMstart) return throttle;
+  if(RPM>maxRPMend) return 0;
+  return throttle*(float)(RPM-maxRPMstart)/(float)maxRPMwidth;
+}
+
+
 
 void loop(){
+  
   /**** copy the pots to the DACs ****/
+  //Cases where regenerative braking should stop functioning:
+    //motor overtemp.
+    //traction pack disconnect. (distribution failure)
+
+
   analogWrite(brakeDacPin, 255*pedals.getBrake());
-  analogWrite(throttleDacPin, 255*pedals.getThrottle());
+  //pedals.getEstop();
+  //pedals.getSDfront();
+  float outThrottle = throttleClamp(pedals.getThrottle(), motor.get_mech_rpm());
+  
+  analogWrite(throttleDacPin, 255*outThrottle);
   digitalWrite(brSwOut, pedals.getBrake());
   digitalWrite(reSwOut, pedals.getReverse());
   digitalWrite(thSwOut, pedals.getThrottle());
@@ -234,3 +266,6 @@ void canDump(CAN_message_t &message){
   }
   Serial.println("");  
 }
+
+
+
