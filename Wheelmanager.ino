@@ -31,6 +31,25 @@ const uint32_t KellyresID = wheel[wheelnum].motorResID; //messages from the kell
 const uint32_t dashID = wheel[wheelnum].dashID;  //telemetry messages from the wheel manager
 
 
+bool redLightState = false;
+bool greenLightState = false;
+
+
+int messageNumber = 0;
+
+float maxSpeedEnd = 7/3.6;    // m/s where the throttle drops to zero (7km/h)
+float maxSpeedStart = 5/3.6;  // m/s where the throttle limiter starts (5km/h)
+
+float wheelCircumference = 0.6*3.14;    // metres
+float gearRatio = 6;          //6:1 reduction chain
+//limit to 7km/h.
+//to simply clamp would cause oscillation, this ramp function should smooth that off.
+uint16_t maxRPMend   = 60 * (maxSpeedEnd / wheelCircumference) * gearRatio;    //the end of the ramp function
+uint16_t maxRPMstart = 60 * (maxSpeedStart/wheelCircumference) * gearRatio;  //the start of the ramp function
+uint16_t maxRPMwidth = maxRPMend - maxRPMstart;
+
+
+
 FlexCAN CANbus(1000000);
 CANcallbacks canbus(&CANbus);
 KellyCAN motor(&canbus, KellyreqID, KellyresID);
@@ -53,6 +72,62 @@ CAN_message_t known_messages[] = {
   {KellyreqID,0,2,0,COM_SW_REV,COM_READING,0,0,0,0,0,0}
 };
 
+
+const uint32_t telemRate = 50000;  //50mS
+uint32_t lastTelem = 0;
+
+const uint32_t kellyPollPeriod = 2000;  //2mS between messages
+uint32_t kellyLastRequest = 0;
+
+void sendTelemPacket(){
+  uint32_t timenow = micros();
+  if((timenow - lastTelem) > telemRate){
+    lastTelem += telemRate;
+    
+    CAN_message_t telem_message = {dashID,0,8, 0, 0,0,0,0,0,0,0,0};
+
+    uint16_t reportRPM = motor.get_mech_rpm();
+
+    uint8_t telemBits = 0;
+    if(redLightState) telemBits |= 1<< redLightBit;
+    if(greenLightState) telemBits |= 1<< greenLightBit;
+
+    telem_message.buf[0] = ((reportRPM>>8) & 0xFF);   //bit packing for the RPM
+    telem_message.buf[1] = (reportRPM & 0xFF);
+    telem_message.buf[2] = motor.get_battery_voltage(); //pack voltage (raw from the kelly)
+    telem_message.buf[3] = motor.get_current_pc();      //controller current in percent (raw)
+    telem_message.buf[4] = 255*pedals.getThrottle();    //throttle repeated from pedals
+    telem_message.buf[5] = 255*pedals.getBrake();       //brake repeated from pedals
+
+    telem_message.buf[6] = telemBits;            //bitmap of additional info
+    //add some switches and status bits (including the red and green lights)
+    telem_message.len = 7;
+
+    canbus.transmit(telem_message);
+  }
+}
+
+
+void kellyRequestNext(){
+  uint32_t timenow = micros();
+  if((timenow - kellyLastRequest) > kellyPollPeriod){
+    /**** Send a new request to the controller ****/
+    if(!motor.get_waiting()){
+      CAN_message_t outbound = known_messages[messageNumber];
+      if(motor.request(outbound)){
+        //Serial.print("sent message ");
+        //Serial.println(messageNumber);
+        //canDump(&outbound);
+        if(++messageNumber > 12){
+          messageNumber = 0;
+          //dumpStats();        
+        }
+      }
+    }
+  }
+}
+
+
 bool motorProcessMessage(CAN_message_t &message){
   motor.processMessage(message);
   return true;
@@ -61,8 +136,9 @@ bool pedalsProcessMessage(CAN_message_t &message){
   pedals.processMessage(message);
   Serial.println("New Pedal Data");
   Serial.print("Brake: ");
-  Serial.println(pedals.getBrake());
-  
+  Serial.print(pedals.getBrake());
+  Serial.print("\tThrottle: ");
+  Serial.println(pedals.getThrottle());
   //toggle the watchdog pin (charge pump)
   digitalWrite(watchdogPin, !digitalRead(watchdogPin));
   return true;
@@ -114,18 +190,6 @@ void setup(){
   canbus.set_callback(pedalFilter.id, &pedalsProcessMessage);
 }
 
-int messageNumber = 0;
-
-float maxSpeedEnd = 7/3.6;    // m/s where the throttle drops to zero (7km/h)
-float maxSpeedStart = 5/3.6;  // m/s where the throttle limiter starts (5km/h)
-
-float wheelCircumference = 0.6*3.14;    // metres
-float gearRatio = 6;          //6:1 reduction chain
-//limit to 7km/h.
-//to simply clamp would cause oscillation, this ramp function should smooth that off.
-uint16_t maxRPMend   = 60 * (maxSpeedEnd / wheelCircumference) * gearRatio;    //the end of the ramp function
-uint16_t maxRPMstart = 60 * (maxSpeedStart/wheelCircumference) * gearRatio;  //the start of the ramp function
-uint16_t maxRPMwidth = maxRPMend - maxRPMstart;
 
 float throttleClamp(float throttle, uint16_t RPM){
   if(RPM<maxRPMstart) return throttle;
@@ -153,31 +217,20 @@ void loop(){
   digitalWrite(reSwOut, pedals.getReverse());
   digitalWrite(thSwOut, pedals.getThrottle());
   
-  bool redLightState = digitalRead(redLightInPin);
-  bool greenLightState = digitalRead(greenLightInPin);
+  redLightState = digitalRead(redLightInPin);
+  greenLightState = digitalRead(greenLightInPin);
 
-  /**** Send a new request to the controller ****/
-  if(!motor.get_waiting()){
-    CAN_message_t outbound = known_messages[messageNumber];
-    if(motor.request(outbound)){
-      //Serial.print("sent message ");
-      //Serial.println(messageNumber);
-      //canDump(&outbound);
-      if(++messageNumber > 12){
-        messageNumber = 0;
-        //dumpStats();        
-      }
-    }
-  }
+
 
   /**** check for new messages ****/
   CAN_message_t message;
-  if(canbus.receive(message)){
+  while(canbus.receive(message)){
     //canDump(&message);
 
     if(motor.get_intercepted()){
       if(motor.get_process_error()){
-        Serial.println("process failed");
+        Serial.print("process failed: ");
+        Serial.println(motor.outgoing.buf[0]);
       }else{
         //Serial.println("process success");
       }
@@ -187,27 +240,8 @@ void loop(){
   }
 
   /**** transmit to the dash ****/
-  CAN_message_t telem_message = {dashID,0,8, 0, 0,0,0,0,0,0,0,0};
-
-  uint16_t reportRPM = motor.get_mech_rpm();
-
-  uint8_t telemBits = 0;
-  if(redLightState) telemBits |= 1<< redLightBit;
-  if(greenLightState) telemBits |= 1<< greenLightBit;
-
-  telem_message.buf[0] = ((reportRPM>>8) & 0xFF);   //bit packing for the RPM
-  telem_message.buf[1] = (reportRPM & 0xFF);
-  telem_message.buf[2] = motor.get_battery_voltage(); //pack voltage (raw from the kelly)
-  telem_message.buf[3] = motor.get_current_pc();      //controller current in percent (raw)
-  telem_message.buf[4] = 255*pedals.getThrottle();    //throttle repeated from pedals
-  telem_message.buf[5] = 255*pedals.getBrake();       //brake repeated from pedals
-
-  telem_message.buf[6] = telemBits;            //bitmap of additional info
-  //add some switches and status bits (including the red and green lights)
-  telem_message.len = 7;
-
-  canbus.transmit(telem_message);
-
+  //send a telemetry message (rate is handled by the send function)
+  sendTelemPacket();
 }
 
 
