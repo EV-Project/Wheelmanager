@@ -1,0 +1,11 @@
+Pedals	KEYWORD1
+
+getThrottle		KEYWORD2
+getBrake		KEYWORD2
+getReverse		KEYWORD2
+getSDfront		KEYWORD2
+getSDrear		KEYWORD2
+getEstop		KEYWORD2
+processMessage	KEYWORD2
+checkWatchdog	KEYWORD2
+patWatchdog		KEYWORD2
